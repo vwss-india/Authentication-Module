@@ -12,6 +12,14 @@ Route::get('/login', [WebSessionController::class, 'create'])->name('login');
 Route::post('/login', [WebSessionController::class, 'store'])
     ->middleware('security.throttle:5,1')
     ->name('login.store');
+
+Route::get('/reset-password', function () {
+    return response()
+        ->view('auth.password-reset')
+        ->header('Referrer-Policy', 'no-referrer')
+        ->header('Cache-Control', 'no-store, private');
+})->name('password.reset.form');
+
 Route::post('/logout', [WebSessionController::class, 'destroy'])
     ->middleware(['auth:web', 'security.throttle:10,1'])
     ->name('logout');

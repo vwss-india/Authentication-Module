@@ -34,7 +34,8 @@ class ProductionConfigurationTest extends TestCase
 
             $gitignore = file_get_contents(base_path('.gitignore'));
             $this->assertIsString($gitignore);
-            $this->assertStringContainsString('/storage/*.key', $gitignore);
+            $this->assertStringContainsString('/storage/oauth-private.key', $gitignore);
+            $this->assertStringContainsString('/storage/oauth-public.key', $gitignore);
         } finally {
             Passport::$keyPath = $originalKeyPath;
         }
