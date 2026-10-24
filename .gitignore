@@ -1,0 +1,76 @@
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.testing
+
+# Local credentials and key files
+/auth.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Local backups and database dumps
+*.backup
+*.bak
+*.dump
+*.sql
+
+# IDE and development tools
+.phpactor.json
+.phpunit.result.cache
+/.codex
+/.cursor/
+/.agents/
+/.claude/
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/.mcp.json
+
+# Dependencies
+/vendor
+/node_modules
+
+# Build and generated files
+/public/build
+/public/fonts-manifest.dev.json
+/public/hot
+/public/storage
+/storage/pail
+_ide_helper.php
+
+# Laravel OAuth keys
+/storage/oauth-private.key
+/storage/oauth-public.key
+
+# Homestead
+Homestead.json
+Homestead.yaml
+
+# Laravel generated files
+/storage/framework/cache/*
+!/storage/framework/cache/.gitignore
+
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+
+/storage/logs/*
+!/storage/logs/.gitignore
+
+# OAuth keys
+/storage/oauth-private.key
+/storage/oauth-public.key
