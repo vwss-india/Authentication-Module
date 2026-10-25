@@ -134,13 +134,14 @@ class MfaController extends Controller
                 return ['error' => 'secret_unavailable'];
             }
 
-            $verified = app('pragmarx.google2fa')->verifyKey(
+            $verified = app('pragmarx.google2fa')->verifyKeyNewer(
                 $secret,
                 $data['code'],
+                0,
                 1
             );
 
-            if (! $verified) {
+            if ($verified === false) {
                 return ['error' => 'invalid_code'];
             }
 
@@ -148,6 +149,7 @@ class MfaController extends Controller
                 ->where('id', $method->id)
                 ->update([
                     'verified_at' => now(),
+                    'last_used_counter' => $verified,
                     'last_used_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -507,14 +509,12 @@ class MfaController extends Controller
             try {
                 $secret = Crypt::decryptString($method->secret_encrypted);
 
-                $lastTimestamp = $method->last_used_at
-                    ? strtotime((string) $method->last_used_at)
-                    : 0;
+                $lastUsedCounter = (int) ($method->last_used_counter ?? 0);
 
                 $valid = app('pragmarx.google2fa')->verifyKeyNewer(
                     $secret,
                     $data['code'],
-                    $lastTimestamp ?: 0,
+                    $lastUsedCounter,
                     1
                 );
             } catch (Throwable) {

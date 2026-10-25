@@ -1,9 +1,43 @@
-@import 'tailwindcss';
+@import '../../visionweb-app-ui-kit/css/vendor-bulma.min.css';
+@import '../../visionweb-app-ui-kit/css/visionweb-theme.css';
 
-@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
+.portal-details {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) 2fr;
+    gap: 0.9rem 1.5rem;
+}
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+.portal-details dt {
+    color: var(--color-muted-text);
+}
+
+.portal-details dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.vwss-break-anywhere {
+    overflow-wrap: anywhere;
+}
+
+.vwss-navbar-brand-mark {
+    display: inline-block;
+    width: 8rem;
+    height: 1.4rem;
+    background-image: url('../../visionweb-app-ui-kit/brand/logo.png');
+    background-position: left center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    filter: brightness(0) invert(1);
+}
+
+@media (max-width: 480px) {
+    .portal-details {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+    }
+
+    .portal-details dd {
+        margin-bottom: 0.75rem;
+    }
 }

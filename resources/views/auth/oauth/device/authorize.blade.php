@@ -1,40 +1,47 @@
-<div>
-    <!-- Very little is needed to make a happy life. - Marcus Aurelius -->
-</div>
-<!doctype html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Authorize {{ $client->name }}</title>
-</head>
-<body>
-    <main>
-        <h1>Authorize {{ $client->name }}</h1>
-        <p>This device will be able to access your VisionWeb account as {{ $user->email }}.</p>
-        @if (count($scopes) > 0)
-            <h2>Requested access</h2>
-            <ul>
-                @foreach ($scopes as $scope)
-                    <li>{{ $scope->description ?: $scope->id }}</li>
-                @endforeach
-            </ul>
-        @endif
-        <form method="post" action="{{ route('passport.device.authorizations.approve') }}">
-            @csrf
-            <input type="hidden" name="state" value="{{ $request->session()->get('state') }}">
-            <input type="hidden" name="client_id" value="{{ $client->id }}">
-            <input type="hidden" name="auth_token" value="{{ $authToken }}">
-            <button type="submit">Approve device</button>
-        </form>
-        <form method="post" action="{{ route('passport.device.authorizations.deny') }}">
-            @csrf
-            @method('delete')
-            <input type="hidden" name="state" value="{{ $request->session()->get('state') }}">
-            <input type="hidden" name="client_id" value="{{ $client->id }}">
-            <input type="hidden" name="auth_token" value="{{ $authToken }}">
-            <button type="submit">Deny device</button>
-        </form>
-    </main>
-</body>
-</html>
+@extends('layouts.portal')
+@section('title', 'Authorize device access')
+@section('content')
+<section class="columns is-centered">
+    <div class="column is-half-tablet is-two-fifths-widescreen">
+        <div class="box">
+            <h1 class="title is-3">Authorize {{ $client->name }}</h1>
+            <p class="mb-2">This device will be able to access your VisionWeb account as {{ $user->email }}.</p>
+
+            @if (count($scopes) > 0)
+                <h2 class="title is-5 mt-4">Requested permissions</h2>
+                <ul class="mb-5">
+                    @foreach ($scopes as $scope)
+                        <li>{{ $scope->description ?: $scope->id }}</li>
+                    @endforeach
+                </ul>
+            @endif
+
+            <div class="notification is-warning is-light" role="note">
+                Continue only if you entered this code for a device you control.
+            </div>
+
+            <div class="columns">
+                <div class="column">
+                    <form method="post" action="{{ route('passport.device.authorizations.approve') }}">
+                        @csrf
+                        <input type="hidden" name="state" value="{{ $request->session()->get('state') }}">
+                        <input type="hidden" name="client_id" value="{{ $client->id }}">
+                        <input type="hidden" name="auth_token" value="{{ $authToken }}">
+                        <button class="button is-primary is-fullwidth" type="submit">Approve device</button>
+                    </form>
+                </div>
+                <div class="column">
+                    <form method="post" action="{{ route('passport.device.authorizations.deny') }}">
+                        @csrf
+                        @method('delete')
+                        <input type="hidden" name="state" value="{{ $request->session()->get('state') }}">
+                        <input type="hidden" name="client_id" value="{{ $client->id }}">
+                        <input type="hidden" name="auth_token" value="{{ $authToken }}">
+                        <button class="button is-light is-fullwidth" type="submit">Deny</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+@endsection

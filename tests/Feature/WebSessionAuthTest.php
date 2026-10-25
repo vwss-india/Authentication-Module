@@ -14,6 +14,12 @@ class WebSessionAuthTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutVite();
+    }
+
     public function test_verified_user_can_sign_in_and_sign_out_through_a_web_session(): void
     {
         $user = User::factory()->create([

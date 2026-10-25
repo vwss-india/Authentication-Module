@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Services\ProductAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -27,18 +28,20 @@ class OidcController extends Controller
             'authorization_endpoint' => $issuer.'/oidc/authorize',
             'token_endpoint' => $issuer.'/oidc/token',
             'userinfo_endpoint' => $issuer.'/oidc/userinfo',
+            'visionweb_product_access_endpoint' => $issuer.'/api/oidc/product-access',
             'jwks_uri' => $issuer.'/oidc/jwks',
             'end_session_endpoint' => $issuer.'/oidc/logout',
             'response_types_supported' => ['code'],
             'subject_types_supported' => ['public', 'pairwise'],
             'id_token_signing_alg_values_supported' => ['RS256'],
-            'scopes_supported' => ['openid', 'profile', 'email', 'phone'],
+            'scopes_supported' => ['openid', 'profile', 'email', 'phone', 'product_access'],
             'token_endpoint_auth_methods_supported' => ['client_secret_basic', 'client_secret_post', 'none'],
             'code_challenge_methods_supported' => ['S256'],
             'claims_supported' => [
                 'sub', 'iss', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'name',
                 'preferred_username', 'email', 'email_verified', 'phone_number',
                 'phone_number_verified', 'at_hash',
+                'visionweb_product',
             ],
         ]);
     }
@@ -91,6 +94,8 @@ class OidcController extends Controller
             'nonce' => ['required', 'string', 'max:255'],
             'code_challenge' => ['required', 'regex:/^[A-Za-z0-9_-]{43}$/'],
             'code_challenge_method' => ['required', 'in:S256'],
+            'product' => ['prohibited'],
+            'product_id' => ['prohibited'],
         ]);
 
         $client = $this->oidcClient($request, $data['client_id']);
@@ -120,6 +125,11 @@ class OidcController extends Controller
             return response('Invalid scope.', 400);
         }
 
+        if (in_array('product_access', $scopes, true)
+            && (! $client->product_id || $client->product_status !== 'active')) {
+            return response('The OIDC client is not bound to an active product.', 403);
+        }
+
         $user = $request->user();
 
         if (! $user || $user->status !== 'active' || ! $user->email_verified_at) {
@@ -130,6 +140,7 @@ class OidcController extends Controller
             ...$data,
             'scopes' => $scopes,
             'user_id' => $user->id,
+            'product_id' => $client->product_id,
         ]);
 
         $this->recordEvent($request, $user, 'auth.oidc.authorization', 'requested', [
@@ -153,6 +164,17 @@ class OidcController extends Controller
 
         $client = $this->oidcClient($request, $authorization['client_id']);
 
+        $allowedRedirects = json_decode((string) $client->redirect_uris, true) ?: [];
+        $configuredScopes = json_decode((string) $client->allowed_scopes, true)
+            ?: ['openid', 'profile', 'email', 'phone'];
+        if (($authorization['product_id'] ?? null) !== $client->product_id
+            || ! in_array($authorization['redirect_uri'], $allowedRedirects, true)
+            || array_diff($authorization['scopes'], $configuredScopes)
+            || (in_array('product_access', $authorization['scopes'], true)
+                && (! $client->product_id || $client->product_status !== 'active'))) {
+            return response()->json(['message' => 'The authorization request is no longer valid.'], 422);
+        }
+
         if (! $request->boolean('approve')) {
             $this->recordEvent($request, $request->user(), 'auth.oidc.authorization', 'denied', [
                 'client_id' => $client->id,
@@ -169,6 +191,7 @@ class OidcController extends Controller
         DB::table('oidc_authorization_codes')->insert([
             'user_id' => $authorization['user_id'],
             'oauth_client_id' => $client->id,
+            'product_id' => $authorization['product_id'],
             'code_hash' => hash('sha256', $code),
             'redirect_uri' => $authorization['redirect_uri'],
             'scopes' => json_encode($authorization['scopes'], JSON_THROW_ON_ERROR),
@@ -252,6 +275,24 @@ class OidcController extends Controller
             return response()->json(['error' => 'invalid_grant'], 400);
         }
 
+        if ($code->product_id !== $client->product_id
+            || (in_array('product_access', json_decode((string) $code->scopes, true) ?: [], true)
+                && (! $client->product_id || $client->product_status !== 'active'))) {
+            $this->recordEvent($request, null, 'auth.oidc.token', 'failure', ['reason' => 'product_binding_mismatch']);
+
+            return response()->json(['error' => 'invalid_grant'], 400);
+        }
+
+        $registeredRedirects = json_decode((string) $client->redirect_uris, true) ?: [];
+        $configuredScopes = json_decode((string) $client->allowed_scopes, true)
+            ?: ['openid', 'profile', 'email', 'phone'];
+        if (! in_array($code->redirect_uri, $registeredRedirects, true)
+            || array_diff(json_decode((string) $code->scopes, true) ?: [], $configuredScopes)) {
+            $this->recordEvent($request, null, 'auth.oidc.token', 'failure', ['reason' => 'client_configuration_changed']);
+
+            return response()->json(['error' => 'invalid_grant'], 400);
+        }
+
         $user = User::query()->find($code->user_id);
 
         if (! $user || $user->status !== 'active' || ! $user->email_verified_at) {
@@ -267,6 +308,7 @@ class OidcController extends Controller
         DB::table('oidc_access_tokens')->insert([
             'user_id' => $user->id,
             'oauth_client_id' => $client->id,
+            'product_id' => $code->product_id,
             'token_hash' => hash('sha256', $accessToken),
             'scopes' => json_encode($scopes, JSON_THROW_ON_ERROR),
             'expires_at' => $expiresAt,
@@ -275,7 +317,7 @@ class OidcController extends Controller
             'updated_at' => now(),
         ]);
 
-        $idToken = $this->issueIdToken($user, $client->id, $code->nonce, $scopes, $accessToken);
+        $idToken = $this->issueIdToken($user, $client->id, $code->nonce, $scopes, $accessToken, $code->product_id);
         $this->recordEvent($request, $user, 'auth.oidc.token', 'success', [
             'client_id' => $client->id,
             'scopes' => $scopes,
@@ -325,8 +367,100 @@ class OidcController extends Controller
         return response()->json($this->claims(
             $user,
             $token->oauth_client_id,
-            json_decode($token->scopes, true) ?: []
+            json_decode($token->scopes, true) ?: [],
+            $token->product_id
         ));
+    }
+
+    public function productAccess(Request $request, ProductAccessService $access): JsonResponse
+    {
+        $productServer = $request->attributes->get('product_server');
+        if (! is_object($productServer)) {
+            return response()->json(['error' => 'invalid_product_server_credentials'], 401);
+        }
+
+        $data = $request->validate([
+            'product' => ['sometimes', 'string', 'max:100'],
+            'organization' => ['required', 'uuid'],
+            'feature' => ['required', 'string', 'max:120'],
+            'permission' => ['required', 'string', 'max:150'],
+        ]);
+        $bearer = $request->bearerToken();
+        if (! $bearer) {
+            return response()->json(['error' => 'invalid_token'], 401);
+        }
+
+        $token = DB::table('oidc_access_tokens as tokens')
+            ->join('oauth_clients as clients', 'clients.id', '=', 'tokens.oauth_client_id')
+            ->join('oidc_client_metadata as settings', 'settings.oauth_client_id', '=', 'clients.id')
+            ->leftJoin('products', 'products.id', '=', 'tokens.product_id')
+            ->where('clients.revoked', false)->where('settings.enabled', true)
+            ->where('tokens.token_hash', hash('sha256', $bearer))
+            ->whereNull('tokens.revoked_at')->where('tokens.expires_at', '>', now())
+            ->select('tokens.*', 'settings.product_id as client_product_id', 'products.slug as product_slug', 'products.status as product_status')->first();
+        $user = $token ? User::query()->find($token->user_id) : null;
+        if (! $user || $user->status !== 'active' || ! $user->email_verified_at) {
+            $this->recordEvent($request, $user, 'auth.oidc.product_access', 'failure', ['reason' => 'invalid_token']);
+
+            return response()->json(['error' => 'invalid_token'], 401);
+        }
+
+        $scopes = json_decode((string) $token->scopes, true) ?: [];
+        if (! in_array('product_access', $scopes, true)) {
+            $this->recordEvent($request, $user, 'auth.oidc.product_access', 'blocked', ['reason' => 'scope_missing']);
+
+            return response()->json(['error' => 'insufficient_scope'], 403);
+        }
+
+        if (! $token->product_id || (int) $token->product_id !== $productServer->product_id
+            || $token->oauth_client_id !== $productServer->oauth_client_id
+            || (int) $token->client_product_id !== $productServer->product_id
+            || ! $token->product_slug || $token->product_status !== 'active'
+            || $token->product_slug !== $productServer->product_slug) {
+            $this->recordEvent($request, $user, 'auth.oidc.product_access', 'blocked', [
+                'client_id' => $token->oauth_client_id,
+                'reason' => 'product_audience_mismatch',
+            ]);
+
+            return response()->json(['access' => false, 'error' => 'product_audience_mismatch'], 403);
+        }
+
+        if (isset($data['product']) && $data['product'] !== $productServer->product_slug) {
+            $this->recordEvent($request, $user, 'auth.oidc.product_access', 'blocked', [
+                'client_id' => $token->oauth_client_id,
+                'reason' => 'product_binding_mismatch',
+            ]);
+
+            return response()->json(['access' => false, 'error' => 'product_binding_mismatch'], 403);
+        }
+
+        $decision = $access->decide(
+            $user,
+            $token->product_slug,
+            $data['organization'],
+            $data['feature'],
+            $data['permission'],
+        );
+        $this->recordEvent($request, $user, 'auth.oidc.product_access', $decision['allowed'] ? 'success' : 'blocked', [
+            'client_id' => $token->oauth_client_id,
+            'product' => $token->product_slug,
+            'organization' => $data['organization'],
+            'feature' => $data['feature'],
+            'permission' => $data['permission'],
+            'reason' => $decision['reason'],
+        ]);
+
+        if (! $decision['allowed']) {
+            return response()->json(['access' => false, 'error' => 'access_denied'], 403);
+        }
+
+        return response()->json([
+            'access' => true,
+            'product' => $token->product_slug,
+            'organization' => $data['organization'],
+            'feature' => $data['feature'],
+            'permission' => $data['permission'],
+        ])->header('Cache-Control', 'no-store');
     }
 
     public function logout(Request $request): Response
@@ -388,7 +522,8 @@ class OidcController extends Controller
             ->where('clients.id', $clientId)
             ->where('clients.revoked', false)
             ->where('settings.enabled', true)
-            ->select('clients.*', 'settings.allowed_scopes', 'settings.client_type')
+            ->leftJoin('products', 'products.id', '=', 'settings.product_id')
+            ->select('clients.*', 'settings.allowed_scopes', 'settings.client_type', 'settings.product_id', 'products.slug as product_slug', 'products.status as product_status')
             ->first();
 
         if (! $client) {
@@ -419,7 +554,7 @@ class OidcController extends Controller
         return is_string($secret) && is_string($client->secret) && Hash::check($secret, $client->secret);
     }
 
-    private function issueIdToken(User $user, string $clientId, string $nonce, array $scopes, string $accessToken): string
+    private function issueIdToken(User $user, string $clientId, string $nonce, array $scopes, string $accessToken, ?int $productId): string
     {
         $key = $this->activeSigningKey();
         $now = now()->timestamp;
@@ -432,7 +567,7 @@ class OidcController extends Controller
             'auth_time' => $user->last_login_at?->timestamp ?? $now,
             'nonce' => $nonce,
             'at_hash' => $this->base64UrlEncode(substr(hash('sha256', $accessToken, true), 0, 16)),
-            ...$this->claims($user, $clientId, $scopes),
+            ...$this->claims($user, $clientId, $scopes, $productId),
         ];
         $header = $this->base64UrlEncode(json_encode([
             'typ' => 'JWT',
@@ -491,7 +626,7 @@ class OidcController extends Controller
         return DB::table('oidc_signing_keys')->where('key_id', $keyId)->first();
     }
 
-    private function claims(User $user, string $clientId, array $scopes): array
+    private function claims(User $user, string $clientId, array $scopes, ?int $productId = null): array
     {
         $claims = ['sub' => $this->subjectFor($user, $clientId)];
 
@@ -508,6 +643,14 @@ class OidcController extends Controller
         if (in_array('phone', $scopes, true)) {
             $claims['phone_number'] = $user->phone;
             $claims['phone_number_verified'] = $user->phone_verified_at !== null;
+        }
+
+        if (in_array('product_access', $scopes, true) && $productId !== null) {
+            $productSlug = DB::table('products')->where('id', $productId)->where('status', 'active')->value('slug');
+
+            if ($productSlug !== null) {
+                $claims['visionweb_product'] = $productSlug;
+            }
         }
 
         return $claims;

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
@@ -144,6 +145,31 @@ class WebSessionController extends Controller
         return redirect('/login');
     }
 
+    public function establishPasskeySession(Request $request): JsonResponse
+    {
+        $user = $request->user('api');
+        $token = $user?->token();
+        abort_unless($user && $token, 401);
+
+        $tokenRecord = DB::table('oauth_access_tokens')->where('id', $token->id)
+            ->where('user_id', $user->id)->where('name', 'VisionWeb Browser Session')
+            ->where('revoked', false)->where('expires_at', '>', now())->first();
+        abort_unless($tokenRecord, 401);
+
+        DB::transaction(function () use ($request, $user, $tokenRecord): void {
+            DB::table('oauth_refresh_tokens')->where('access_token_id', $tokenRecord->id)
+                ->where('revoked', false)->update(['revoked' => true]);
+            DB::table('oauth_access_tokens')->where('id', $tokenRecord->id)
+                ->where('revoked', false)->update(['revoked' => true, 'updated_at' => now()]);
+            $this->recordEvent($request, $user, 'auth.web_passkey_login', 'success');
+        });
+
+        Auth::guard('web')->login($user);
+        $request->session()->regenerate();
+
+        return response()->json(['message' => 'Passkey sign-in complete.']);
+    }
+
     private function verifyMfaCode(User $user, object $method, string $code): bool
     {
         return DB::transaction(function () use ($user, $method, $code): bool {
@@ -161,7 +187,7 @@ class WebSessionController extends Controller
             if (preg_match('/^\d{6}$/', $code)) {
                 try {
                     $secret = Crypt::decryptString($lockedMethod->secret_encrypted);
-                    $lastUsed = $lockedMethod->last_used_at ? strtotime((string) $lockedMethod->last_used_at) : 0;
+                    $lastUsed = (int) ($lockedMethod->last_used_counter ?? 0);
                     $valid = app('pragmarx.google2fa')->verifyKeyNewer(
                         $secret,
                         $code,
@@ -171,6 +197,7 @@ class WebSessionController extends Controller
 
                     if ($valid !== false) {
                         DB::table('mfa_methods')->where('id', $lockedMethod->id)->update([
+                            'last_used_counter' => $valid,
                             'last_used_at' => now(),
                             'updated_at' => now(),
                         ]);

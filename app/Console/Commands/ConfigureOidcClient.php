@@ -7,7 +7,7 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
-#[Signature('oidc:client:configure {clientId} {--client-type=confidential} {--subject-type=public} {--scopes=openid,profile,email} {--logout-redirects=} {--disabled}')]
+#[Signature('oidc:client:configure {clientId} {--client-type=confidential} {--subject-type=public} {--scopes=openid,profile,email} {--product=} {--logout-redirects=} {--disabled}')]
 #[Description('Configure OIDC metadata for an existing Passport authorization-code client.')]
 class ConfigureOidcClient extends Command
 {
@@ -33,6 +33,7 @@ class ConfigureOidcClient extends Command
         $clientType = (string) $this->option('client-type');
         $subjectType = (string) $this->option('subject-type');
         $scopes = array_values(array_unique(array_filter(explode(',', (string) $this->option('scopes')))));
+        $productSlug = trim((string) $this->option('product'));
         $logoutRedirects = array_values(array_unique(array_filter(explode(',', (string) $this->option('logout-redirects')))));
 
         if (! in_array($clientType, ['confidential', 'public'], true)) {
@@ -54,10 +55,27 @@ class ConfigureOidcClient extends Command
             return self::FAILURE;
         }
 
-        if (! in_array('openid', $scopes, true) || array_diff($scopes, ['openid', 'profile', 'email', 'phone'])) {
+        if (! in_array('openid', $scopes, true) || array_diff($scopes, ['openid', 'profile', 'email', 'phone', 'product_access'])) {
             $this->error('Scopes must include openid and use only supported OIDC scopes.');
 
             return self::FAILURE;
+        }
+
+        $product = null;
+        if (in_array('product_access', $scopes, true) || $productSlug !== '') {
+            if ($productSlug === '') {
+                $this->error('A product slug is required when enabling the product_access scope.');
+
+                return self::FAILURE;
+            }
+
+            $product = DB::table('products')->where('slug', $productSlug)->where('status', 'active')->first();
+
+            if (! $product) {
+                $this->error('The product does not exist or is not active.');
+
+                return self::FAILURE;
+            }
         }
 
         foreach ($logoutRedirects as $redirectUri) {
@@ -72,6 +90,7 @@ class ConfigureOidcClient extends Command
             ['oauth_client_id' => $clientId],
             [
                 'client_type' => $clientType,
+                'product_id' => $product?->id,
                 'application_type' => 'web',
                 'subject_type' => $subjectType,
                 'allowed_scopes' => json_encode($scopes, JSON_THROW_ON_ERROR),

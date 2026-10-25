@@ -26,6 +26,7 @@ class OidcFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('issuer', 'https://auth.example.test')
             ->assertJsonPath('authorization_endpoint', 'https://auth.example.test/oidc/authorize')
+            ->assertJsonPath('visionweb_product_access_endpoint', 'https://auth.example.test/api/oidc/product-access')
             ->assertJsonPath('code_challenge_methods_supported.0', 'S256');
 
         $response = $this->getJson('/oidc/jwks')
@@ -63,7 +64,11 @@ class OidcFlowTest extends TestCase
                 'code_challenge_method' => 'S256',
             ]))
             ->assertOk()
-            ->assertSee('Authorize VisionWeb OIDC test client');
+            ->assertSee('class="vwss-app"', false)
+            ->assertSee('Authorize VisionWeb OIDC test client')
+            ->assertSee('Requested permissions')
+            ->assertSee('Approve access')
+            ->assertSee('Deny');
 
         $this->assertDatabaseCount('oidc_authorization_codes', 0);
 
@@ -263,6 +268,35 @@ class OidcFlowTest extends TestCase
         ]);
 
         $this->assertSame(1, $exitCode);
+    }
+
+    public function test_oidc_client_command_requires_and_persists_an_active_product_for_product_access(): void
+    {
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
+            'Product-bound OIDC client', ['https://client.example/callback'], false
+        );
+        $now = now();
+        $productId = DB::table('products')->insertGetId([
+            'slug' => 'test-product', 'name' => 'Test Product', 'status' => 'active',
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+
+        $this->assertSame(1, Artisan::call('oidc:client:configure', [
+            'clientId' => $client->id,
+            '--client-type' => 'public',
+            '--scopes' => 'openid,email,product_access',
+        ]));
+
+        $this->assertSame(0, Artisan::call('oidc:client:configure', [
+            'clientId' => $client->id,
+            '--client-type' => 'public',
+            '--scopes' => 'openid,email,product_access',
+            '--product' => 'test-product',
+        ]));
+        $this->assertDatabaseHas('oidc_client_metadata', [
+            'oauth_client_id' => $client->id,
+            'product_id' => $productId,
+        ]);
     }
 
     private function createOidcClient(): string

@@ -1,118 +1,107 @@
-<!doctype html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="referrer" content="no-referrer">
-    <title>Reset Password - {{ config('app.name') }}</title>
-</head>
-<body>
-    <main>
-        <h1>Reset your password</h1>
-        <p>Enter your new password below.</p>
+@extends('layouts.portal')
+@section('title', 'Reset password')
+@section('content')
+<section class="columns is-centered">
+    <div class="column is-half-tablet is-one-third-widescreen">
+        <div class="box">
+            <h1 class="title is-3">Reset your password</h1>
+            <p class="mb-4">Enter a new password for your account.</p>
 
-        <p id="message" role="status" aria-live="polite"></p>
+            <p id="message" class="notification is-hidden" role="status" aria-live="polite"></p>
 
-        <form id="reset-form">
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email"
-                   autocomplete="username" required readonly>
+            <form id="reset-form">
+                <div class="field">
+                    <label class="label" for="email">Email</label>
+                    <input class="input" id="email" name="email" type="email" autocomplete="username" required readonly>
+                </div>
+                <div class="field">
+                    <label class="label" for="password">New password</label>
+                    <input class="input" id="password" name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+                </div>
+                <div class="field">
+                    <label class="label" for="password_confirmation">Confirm new password</label>
+                    <input class="input" id="password_confirmation" name="password_confirmation" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+                </div>
+                <button id="submit-button" class="button is-primary is-fullwidth" type="submit">Reset password</button>
+            </form>
 
-            <label for="password">New password</label>
-            <input id="password" name="password" type="password"
-                   minlength="12" autocomplete="new-password"
-                   required>
+            <p class="mt-4"><a href="{{ route('login') }}">Back to sign in</a></p>
+        </div>
+    </div>
+</section>
 
-            <label for="password_confirmation">Confirm new password</label>
-            <input id="password_confirmation"
-                   name="password_confirmation" type="password"
-                   minlength="12" autocomplete="new-password"
-                   required>
+<script nonce="{{ request()->attributes->get('csp_nonce') }}">
+(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const email = params.get('email') || '';
 
-            <button id="submit-button" type="submit">
-                Reset password
-            </button>
-        </form>
+    // Remove the sensitive token from the visible browser URL.
+    window.history.replaceState({}, document.title, '/reset-password');
 
-        <p><a href="/login">Back to sign in</a></p>
-    </main>
+    const form = document.getElementById('reset-form');
+    const message = document.getElementById('message');
+    const button = document.getElementById('submit-button');
 
-    <script>
-    (() => {
-        const params = new URLSearchParams(window.location.search);
-        const token = params.get('token') || '';
-        const email = params.get('email') || '';
+    document.getElementById('email').value = email;
 
-        // Remove the sensitive token from the visible browser URL.
-        window.history.replaceState({}, document.title, '/reset-password');
+    if (!token || !email) {
+        message.className = 'notification is-danger';
+        message.textContent = 'Reset link is missing required information. Request a new password reset email.';
+        form.hidden = true;
+        return;
+    }
 
-        const form = document.getElementById('reset-form');
-        const message = document.getElementById('message');
-        const button = document.getElementById('submit-button');
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        message.className = 'notification is-hidden';
 
-        document.getElementById('email').value = email;
+        const password = document.getElementById('password').value;
+        const confirmation = document.getElementById('password_confirmation').value;
 
-        if (!token || !email) {
-            message.textContent =
-                'Reset link is missing required information. Request a new password reset email.';
-            form.hidden = true;
+        if (password !== confirmation) {
+            message.className = 'notification is-danger';
+            message.textContent = 'Passwords do not match.';
             return;
         }
 
-        form.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            message.textContent = '';
+        button.disabled = true;
+        message.className = 'notification is-info';
+        message.textContent = 'Resetting password…';
 
-            const password = document.getElementById('password').value;
-            const confirmation =
-                document.getElementById('password_confirmation').value;
+        try {
+            const response = await fetch('/api/v1/auth/reset-password', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    email,
+                    token,
+                    password,
+                    password_confirmation: confirmation
+                })
+            });
+            const data = await response.json().catch(() => ({}));
 
-            if (password !== confirmation) {
-                message.textContent = 'Passwords do not match.';
+            if (!response.ok) {
+                const errors = data.errors ? Object.values(data.errors).flat().join(' ') : '';
+                message.className = 'notification is-danger';
+                message.textContent = errors || data.message || 'Password reset failed.';
                 return;
             }
 
-            button.disabled = true;
-            message.textContent = 'Resetting password…';
-
-            try {
-                const response = await fetch('/api/v1/auth/reset-password', {
-                    method: 'POST',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        email,
-                        token,
-                        password,
-                        password_confirmation: confirmation
-                    })
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    const errors = data.errors
-                        ? Object.values(data.errors).flat().join(' ')
-                        : '';
-
-                    message.textContent = errors ||
-                        data.message || 'Password reset failed.';
-                    return;
-                }
-
-                form.hidden = true;
-                message.textContent =
-                    'Password reset successfully. You can now sign in.';
-            } catch {
-                message.textContent =
-                    'Unable to contact the server. Please try again.';
-            } finally {
-                button.disabled = false;
-            }
-        });
-    })();
-    </script>
-</body>
-</html>
+            form.hidden = true;
+            message.className = 'notification is-success';
+            message.textContent = 'Password reset successfully. You can now sign in.';
+        } catch {
+            message.className = 'notification is-danger';
+            message.textContent = 'Unable to contact the server. Please try again.';
+        } finally {
+            button.disabled = false;
+        }
+    });
+})();
+</script>
+@endsection
